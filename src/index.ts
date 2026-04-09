@@ -1,10 +1,59 @@
-import { defineIntegration, createRestHandler } from '@weldable/integration-core'
+import { defineIntegration, createRestHandler, IntegrationValidationError } from '@weldable/integration-core'
 
 const rest = createRestHandler()
 
+// ---------------------------------------------------------------------------
+// find action helpers
+// ---------------------------------------------------------------------------
+
+const MIME_BY_TYPE: Record<string, string> = {
+  document: 'application/vnd.google-apps.document',
+  spreadsheet: 'application/vnd.google-apps.spreadsheet',
+  presentation: 'application/vnd.google-apps.presentation',
+  folder: 'application/vnd.google-apps.folder',
+  pdf: 'application/pdf',
+}
+
+/**
+ * Translate the agent-facing `type` enum to a Drive `q` clause. Image and
+ * video use prefix matching since Drive stores concrete subtypes like
+ * 'image/png' and 'video/mp4'. 'any' → no clause.
+ */
+function mimeClauseForType(type: string): string | null {
+  const t = type.toLowerCase()
+  if (t === 'any' || !t) return null
+  if (t === 'image') return "mimeType contains 'image/'"
+  if (t === 'video') return "mimeType contains 'video/'"
+  const mime = MIME_BY_TYPE[t]
+  if (!mime) return null
+  return `mimeType = '${mime}'`
+}
+
+/** Map a Drive mimeType back to the agent-facing `type` enum. */
+function typeForMime(mime: string | undefined): string {
+  if (!mime) return 'unknown'
+  if (mime === 'application/vnd.google-apps.document') return 'document'
+  if (mime === 'application/vnd.google-apps.spreadsheet') return 'spreadsheet'
+  if (mime === 'application/vnd.google-apps.presentation') return 'presentation'
+  if (mime === 'application/vnd.google-apps.folder') return 'folder'
+  if (mime === 'application/pdf') return 'pdf'
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  return mime
+}
+
+/**
+ * Escape a user-supplied string for interpolation into a Drive `q` clause.
+ * Single quotes and backslashes must be escaped — otherwise names like
+ * "Joe's Q1 budget" break the query.
+ */
+function escapeDriveQueryLiteral(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+}
+
 export default defineIntegration({
   id: 'google_drive',
-  version: 1,
+  version: 2,
   name: 'Google Drive',
   description: 'Search, organize, and share files and folders in Google Drive.',
   icon: 'google-drive',
@@ -19,89 +68,122 @@ export default defineIntegration({
   actions: [
     // ── Files ─────────────────────────────────────────────────
     {
-      actionId: 'list_files',
-      name: 'List files',
-      description: 'Search and browse files in Google Drive.',
+      actionId: 'find',
+      name: 'Find files',
+      description:
+        'Find files in Google Drive by name, content, and type. Returns the most recently modified matches. Searches across all drives the user can access.',
       intents: [
+        'find my google doc',
+        'find a spreadsheet',
+        'where is my budget sheet',
+        'search google drive',
+        'find the meeting notes',
+        'locate a file in drive',
+        'look for a file in google drive',
         'find files in google drive',
-        'search my drive',
-        'look for documents',
-        'what files do I have',
-        'find a file',
-        'show my drive files',
-        'search for a document in drive',
-        'browse my google drive',
-        'what documents do I have in drive',
       ],
       inputFields: [
         {
-          name: 'q',
+          name: 'query',
           type: 'string',
           required: false,
-          description: 'Drive search query, e.g. "name contains \'report\'" or "mimeType = \'application/vnd.google-apps.spreadsheet\'".',
+          description: 'Free-text search matched against filename and file content.',
         },
         {
-          name: 'pageSize',
+          name: 'type',
+          type: 'enum',
+          required: false,
+          description: 'Filter by file type. Defaults to any.',
+          default: 'any',
+          options: [
+            { label: 'Any', value: 'any' },
+            { label: 'Document', value: 'document' },
+            { label: 'Spreadsheet', value: 'spreadsheet' },
+            { label: 'Presentation', value: 'presentation' },
+            { label: 'Folder', value: 'folder' },
+            { label: 'PDF', value: 'pdf' },
+            { label: 'Image', value: 'image' },
+            { label: 'Video', value: 'video' },
+          ],
+        },
+        {
+          name: 'limit',
           type: 'number',
           required: false,
-          description: 'Maximum number of files to return (1-1000).',
-          default: 100,
-        },
-        {
-          name: 'pageToken',
-          type: 'string',
-          required: false,
-          description: 'Token for the next page of results.',
-        },
-        {
-          name: 'orderBy',
-          type: 'string',
-          required: false,
-          description: 'Sort order, e.g. "modifiedTime desc" or "name".',
-        },
-        {
-          name: 'fields',
-          type: 'string',
-          required: false,
-          description: 'Field mask for the response, e.g. "files(id,name,mimeType,modifiedTime,size,parents)".',
-        },
-        {
-          name: 'corpora',
-          type: 'string',
-          required: false,
-          description: 'Source of files: "user", "drive", "domain", or "allDrives".',
-        },
-        {
-          name: 'includeItemsFromAllDrives',
-          type: 'boolean',
-          required: false,
-          description: 'Whether to include shared drive items.',
-        },
-        {
-          name: 'supportsAllDrives',
-          type: 'boolean',
-          required: false,
-          description: 'Whether the application supports shared drives.',
+          description: 'Maximum number of results to return. Default 20, max 100.',
+          default: 20,
         },
       ],
       outputFields: [
-        { name: 'files', type: 'array', description: 'Array of file objects, each with id, name, mimeType, and modifiedTime.' },
-        { name: 'nextPageToken', type: 'string', description: 'Token to retrieve the next page of results.' },
-      ],
-      execute: rest({
-        method: 'GET',
-        path: '/files',
-        paramMapping: {
-          q: 'query',
-          pageSize: 'query',
-          pageToken: 'query',
-          orderBy: 'query',
-          fields: 'query',
-          corpora: 'query',
-          includeItemsFromAllDrives: 'query',
-          supportsAllDrives: 'query',
+        {
+          name: 'files',
+          type: 'array',
+          description:
+            'Matching files, most recently modified first. Each has { id, name, type, url, modifiedAt, owner }.',
         },
-      }),
+        {
+          name: 'hasMore',
+          type: 'boolean',
+          description: 'True if more results exist beyond the limit. Narrow the query to see them.',
+        },
+      ],
+      execute: async (args, ctx) => {
+        const query = typeof args.query === 'string' ? args.query.trim() : ''
+        const type = typeof args.type === 'string' && args.type ? args.type : 'any'
+        const rawLimit = typeof args.limit === 'number' ? args.limit : Number(args.limit ?? 20)
+        const limit = Number.isFinite(rawLimit) && rawLimit > 0
+          ? Math.min(Math.floor(rawLimit), 100)
+          : 20
+
+        const clauses: string[] = ['trashed = false']
+        if (query) {
+          const escaped = escapeDriveQueryLiteral(query)
+          clauses.push(`(name contains '${escaped}' or fullText contains '${escaped}')`)
+        }
+        const mimeClause = mimeClauseForType(type)
+        if (mimeClause) clauses.push(mimeClause)
+        if (type !== 'any' && !mimeClause && type !== '') {
+          throw new IntegrationValidationError(
+            `unknown type "${type}". Allowed: any, document, spreadsheet, presentation, folder, pdf, image, video`,
+            'type',
+          )
+        }
+
+        const res = await ctx.http.get('/files', {
+          query: {
+            q: clauses.join(' and '),
+            pageSize: String(limit),
+            orderBy: 'modifiedTime desc',
+            fields: 'files(id,name,mimeType,modifiedTime,webViewLink,owners(emailAddress)),nextPageToken',
+            includeItemsFromAllDrives: 'true',
+            supportsAllDrives: 'true',
+            corpora: 'allDrives',
+          },
+        })
+
+        const data = res.data as {
+          files?: Array<{
+            id?: string
+            name?: string
+            mimeType?: string
+            modifiedTime?: string
+            webViewLink?: string
+            owners?: Array<{ emailAddress?: string }>
+          }>
+          nextPageToken?: string
+        }
+
+        const files = (data.files ?? []).map(f => ({
+          id: f.id ?? '',
+          name: f.name ?? '',
+          type: typeForMime(f.mimeType),
+          url: f.webViewLink ?? '',
+          modifiedAt: f.modifiedTime ?? '',
+          owner: f.owners?.[0]?.emailAddress ?? '',
+        }))
+
+        return { files, hasMore: Boolean(data.nextPageToken) }
+      },
     },
     {
       actionId: 'get_file',
