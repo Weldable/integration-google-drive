@@ -1,4 +1,4 @@
-import { defineIntegration, createRestHandler, IntegrationValidationError } from '@weldable/integration-core'
+import { defineIntegration, createRestHandler, IntegrationValidationError, fakeId, fakeArray, fakeEmail, fakeIsoTimestamp, fakeUrl, deriveSeed } from '@weldable/integration-core'
 
 const rest = createRestHandler()
 
@@ -184,6 +184,17 @@ export default defineIntegration({
 
         return { files, hasMore: Boolean(data.nextPageToken) }
       },
+      mockExecute: async (_args, ctx) => ({
+        files: fakeArray(ctx.seed, 3, (s) => ({
+          id: fakeId(s, 28),
+          name: `mock-file-${s.slice(-4)}.txt`,
+          type: 'document',
+          url: fakeUrl(s),
+          modifiedAt: fakeIsoTimestamp(s),
+          owner: fakeEmail(s),
+        })),
+        hasMore: false,
+      }),
     },
     {
       actionId: 'get_file',
@@ -228,6 +239,14 @@ export default defineIntegration({
         { name: 'size', type: 'string', description: 'The file size in bytes (as a string for large numbers).' },
       ],
       execute: rest({ method: 'GET', path: '/files/{fileId}', paramMapping: { fileId: 'path', fields: 'query', supportsAllDrives: 'query' } }),
+      mockExecute: async (args, ctx) => ({
+        id: String(args.fileId ?? fakeId(ctx.seed, 28)),
+        name: `mock-file.txt`,
+        mimeType: 'text/plain',
+        webViewLink: fakeUrl(ctx.seed),
+        modifiedTime: fakeIsoTimestamp(ctx.seed),
+        size: '1024',
+      }),
     },
     {
       actionId: 'create_file',
@@ -307,6 +326,12 @@ export default defineIntegration({
           shortcutDetails: 'body',
           fields: 'query',
         },
+      }),
+      mockExecute: async (args, ctx) => ({
+        id: fakeId(ctx.seed, 28),
+        name: String(args.name ?? 'mock-file.txt'),
+        mimeType: String(args.mimeType ?? 'text/plain'),
+        webViewLink: fakeUrl(ctx.seed),
       }),
     },
     {
@@ -520,6 +545,16 @@ export default defineIntegration({
         { name: 'nextPageToken', type: 'string', description: 'Token to retrieve the next page of results.' },
       ],
       execute: rest({ method: 'GET', path: '/files/{fileId}/permissions', paramMapping: { fileId: 'path', fields: 'query', pageSize: 'query', supportsAllDrives: 'query' } }),
+      mockExecute: async (_args, ctx) => ({
+        permissions: fakeArray(ctx.seed, 2, (s) => ({
+          id: fakeId(s, 20),
+          role: 'reader',
+          type: 'user',
+          emailAddress: fakeEmail(s),
+          displayName: `User ${s.slice(-4)}`,
+        })),
+        nextPageToken: undefined,
+      }),
     },
     {
       actionId: 'create_permission',
