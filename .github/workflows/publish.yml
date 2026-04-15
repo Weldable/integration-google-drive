@@ -1,0 +1,75 @@
+name: Publish to npm
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Check for version bump
+        id: diff
+        run: |
+          CURRENT=$(jq -r .version package.json)
+          PREVIOUS=$(git show HEAD~1:package.json 2>/dev/null | jq -r .version || echo "")
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" != "$PREVIOUS" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.diff.outputs.changed == 'true'
+        run: npm ci
+
+      - name: Build
+        if: steps.diff.outputs.changed == 'true'
+        run: npm run build
+
+      - name: Guard against duplicate publish
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          PKG=$(jq -r .name package.json)
+          VERSION=${{ steps.diff.outputs.current }}
+          if npm view "${PKG}@${VERSION}" version 2>/dev/null; then
+            echo "Version ${VERSION} already published. Skipping."
+            exit 1
+          fi
+
+      - name: Publish to npm
+        if: steps.diff.outputs.changed == 'true'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Tag release
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          VERSION=${{ steps.diff.outputs.current }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+
+      - name: Create GitHub release
+        if: steps.diff.outputs.changed == 'true'
+        run: gh release create "v${{ steps.diff.outputs.current }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
