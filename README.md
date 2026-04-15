@@ -17,14 +17,20 @@ npm install @weldable/integration-google-drive @weldable/integration-core
 ```ts
 import integration from '@weldable/integration-google-drive'
 
-// Pass to a Weldable-compatible host
-console.log(integration.actions.map(a => a.id))
-```
+// Find files
+const find = integration.actions.find(a => a.id === 'google_drive.find')!
 
-## Contributing and releasing
+const files = await find.execute(
+  { query: 'Q1 report', type: 'spreadsheet', limit: 5 },
+  ctx, // ActionContext from your Weldable-compatible host
+)
 
-See [CONTRIBUTING.md](https://github.com/weldable/integration-core/blob/main/CONTRIBUTING.md) in `@weldable/integration-core` for the development workflow and release process.
+// Get file metadata
+const getFile = integration.actions.find(a => a.id === 'google_drive.get_file')!
 
-## License
+const file = await getFile.execute(
+  { fileId: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms' },
+  ctx,
+)
 
-MIT
+console.log(file.name, file.webViewLink)
