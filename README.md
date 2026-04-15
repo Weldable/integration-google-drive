@@ -2,7 +2,7 @@
 
 Google Drive file actions for Weldable.
 
-Part of the [Weldable](https://github.com/weldable/weldable) integration library — see [@weldable/integration-core](https://github.com/weldable/integration-core) for the full catalog.
+Part of the [Weldable](https://weldable.ai/) integration library — see [@weldable/integration-core](https://github.com/weldable/integration-core) for the full catalog.
 
 ## Install
 
